@@ -1,5 +1,9 @@
 {
   "name": "codeopsstudio-telegram-webhook-bridge",
   "compatibility_date": "2025-04-27",
-  "main": "worker.js"
+  "main": "worker.js",
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 100
+  }
 }
