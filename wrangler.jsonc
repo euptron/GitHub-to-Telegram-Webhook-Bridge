@@ -1,0 +1,5 @@
+{
+  "name": "codeopsstudio-telegram-webhook-bridge",
+  "compatibility_date": "2025-04-27",
+  "main": "worker.js"
+}
