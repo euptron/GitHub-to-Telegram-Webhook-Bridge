@@ -1,20 +1,17 @@
-// If you must use this code define the expected environment variables (secrets)
-// These MUST be configured in your Cloudflare Worker settings -> Secrets 
-// Hence Change the following fields 
-// - COS_TELEGRAM_BOT_TOKEN: Your Telegram Bot Token
-// - COS_TELEGRAM_CHAT_ID: Your Telegram Supergroup Chat ID (usually negative)
-// - COS_TELEGRAM_MESSAGE_THREAD_ID: The specific Topic ID within the supergroup
-// - COS_TIMELESS_GITHUB_SECRETS: (Optional but Recommended) The secret you configured in the GitHub webhook settings
-// If these works for you star my repository -> https://github.com/euptron/CodeOps-Studio
+// Environment variables (Secrets) should be configured in Cloudflare Worker settings
+// - COS_TELEGRAM_BOT_TOKEN
+// - COS_TELEGRAM_CHAT_ID
+// - COS_TELEGRAM_MESSAGE_THREAD_ID
+// - COS_TIMELESS_GITHUB_SECRETS (Optional but Recommended)
 
 export default {
     async fetch(request, env, ctx) {
+        // --- Request validation and signature verification ---
         if (request.method !== "POST") {
             return new Response("Method Not Allowed. Expected POST.", {
                 status: 405,
             });
         }
-
         const githubEvent = request.headers.get("X-GitHub-Event");
         const githubSignature = request.headers.get("X-Hub-Signature-256");
         const contentType = request.headers.get("content-type");
@@ -24,7 +21,6 @@ export default {
                 status: 400,
             });
         }
-
         if (!contentType || contentType !== "application/json") {
             return new Response(
                 "Unsupported content-type. Expected application/json.",
@@ -32,14 +28,13 @@ export default {
             );
         }
 
-        // Request is cloned so we read the body multiple times (once for verification, once for parsing)
         const requestClone = request.clone();
         const bodyText = await requestClone.text();
 
         if (env.COS_TIMELESS_GITHUB_SECRETS) {
             if (!githubSignature) {
                 console.error(
-                    "GitHub Secret is configured, but X-Hub-Signature-256 header is missing."
+                    "GitHub Secret configured, but X-Hub-Signature-256 header missing."
                 );
                 return new Response("Forbidden. Signature required.", {
                     status: 403,
@@ -67,10 +62,11 @@ export default {
             }
         } else {
             console.warn(
-                "COS_TIMELESS_GITHUB_SECRETS is not set. Skipping signature verification. This is insecure!"
+                "COS_TIMELESS_GITHUB_SECRETS not set. Skipping signature verification."
             );
         }
-        
+        // --- End verification ---
+
         let payload;
         try {
             payload = JSON.parse(bodyText);
@@ -81,55 +77,50 @@ export default {
 
         let message = "";
         try {
-            message = formatMessage(githubEvent, payload);
+            message = formatMessage(githubEvent, payload, env);
         } catch (error) {
             console.error(
                 `Error formatting message for event ${githubEvent}:`,
                 error
             );
+            const repoName = escapeMarkdownV2(
+                payload.repository?.full_name || "unknown repo"
+            );
             message = `⚠️ Error processing \`${escapeMarkdownV2(
                 githubEvent
-            )}\` event for repo \`${escapeMarkdownV2(
-                payload.repository?.full_name || "unknown"
-            )}\`\\.`;
+            )}\` event for ${repoName}`;
         }
 
         if (message) {
             console.log(
                 `Sending message to Telegram for event: ${githubEvent}`
             );
-            ctx.waitUntil(sendTelegramMessage(message, env)); // completes after the response is sent
+            ctx.waitUntil(sendTelegramMessage(message, env));
             return new Response("Webhook received and processing initiated.", {
                 status: 202,
             });
         } else {
             console.log(
-                `No message generated for event: ${githubEvent}. Sending OK response.`
+                `No message generated for event: ${githubEvent} / action: ${
+                    payload.action || "N/A"
+                }.`
             );
             return new Response(
-                "Webhook received, event action not configured for notification.",
+                `Webhook received, event type "${githubEvent}" ${
+                    payload.action ? `(action: "${payload.action}") ` : ""
+                }not configured for notification.`,
                 { status: 200 }
             );
         }
     },
 };
 
-// --- HELPER FUNCTIONS ---
+// --- Helper Functions ---
 
-/**
- * Verifies the GitHub webhook signature.
- * @param {string} secret - The GitHub webhook secret.
- * @param {string} body - The raw request body text.
- * @param {string} signatureHeader - The value of the X-Hub-Signature-256 header.
- * @returns {Promise<boolean>} - True if the signature is valid, false otherwise.
- */
 async function verifyGitHubSignature(secret, body, signatureHeader) {
-    if (!signatureHeader || !signatureHeader.startsWith("sha256=")) {
+    if (!signatureHeader || !signatureHeader.startsWith("sha256="))
         return false;
-    }
-
     const signature = signatureHeader.substring(7);
-
     const encoder = new TextEncoder();
     const key = await crypto.subtle.importKey(
         "raw",
@@ -138,359 +129,1165 @@ async function verifyGitHubSignature(secret, body, signatureHeader) {
         false,
         ["sign"]
     );
-
     const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
-
     const calculatedSignature = Array.from(new Uint8Array(mac))
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
-
     return await timingSafeEqual(signature, calculatedSignature);
 }
 
-/**
- * Simple buffer comparison resistant to timing attacks.
- */
 async function timingSafeEqual(a, b) {
-    if (a.length !== b.length) {
-        return false;
-    }
-    // Manual constant time comparison:
+    if (a.length !== b.length) return false;
     let result = 0;
     const encoder = new TextEncoder();
     const encodedA = encoder.encode(a);
     const encodedB = encoder.encode(b);
-
-    for (let i = 0; i < encodedA.length; i++) {
+    for (let i = 0; i < encodedA.length; i++)
         result |= encodedA[i] ^ encodedB[i];
-    }
     return result === 0;
 }
 
-/**
- * Escapes characters for Telegram MarkdownV2 parse mode.
- * @param {string} text - The input string.
- * @returns {string} - The escaped string.
- */
 function escapeMarkdownV2(text) {
     if (!text) return "";
     // Escape characters: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    // Need to escape backslashes first if they appear in the text
+    text = text.replace(/\\/g, "\\\\");
     return text.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, "\\$1");
+}
+
+function formatDuration(startStr, endStr) {
+    if (!startStr || !endStr) return "";
+    try {
+        const start = new Date(startStr);
+        const end = new Date(endStr);
+        const durationMs = end - start;
+        if (durationMs < 0) return "";
+
+        const seconds = Math.floor(durationMs / 1000) % 60;
+        const minutes = Math.floor(durationMs / (1000 * 60)) % 60;
+        const hours = Math.floor(durationMs / (1000 * 60 * 60));
+
+        let durationStr = "";
+        if (hours > 0) durationStr += `${hours}h `;
+        if (minutes > 0) durationStr += `${minutes}m `;
+        durationStr += `${seconds}s`;
+
+        return `(took ${escapeMarkdownV2(durationStr.trim())})`;
+    } catch (e) {
+        console.error("Error parsing duration:", e);
+        return "";
+    }
 }
 
 /**
  * Formats the message based on the GitHub event type and payload.
- * @param {string} eventType - The GitHub event type (e.g., 'push', 'pull_request').
- * @param {object} payload - The parsed JSON payload from GitHub.
- * @returns {string} - The formatted message string (MarkdownV2), or empty string if not handled.
+ * @param {string} eventType The GitHub event type.
+ * @param {object} payload The parsed JSON payload from GitHub.
+ * @param {object} env Environment variables.
+ * @returns {string} The formatted message string (MarkdownV2), or empty string.
  */
-function formatMessage(eventType, payload) {
+function formatMessage(eventType, payload, env) {
     const repo = payload.repository;
-    const repoName = escapeMarkdownV2(repo?.full_name || "Unknown Repo");
-    const repoUrl = repo?.html_url;
-    const sender = payload.sender;
-    const senderName = escapeMarkdownV2(sender?.login || "Unknown User");
+    const sender = payload.sender; // User performing the action (usually)
+    const organization = payload.organization; // Org context if available
+
+    // Common elements
+    const senderName = escapeMarkdownV2(sender?.login || "unknown_user");
     const senderUrl = sender?.html_url;
-    let message = `*Repo:* [${repoName}](${
-        repoUrl || "#"
-    }) \\| *By:* [${senderName}](${senderUrl || "#"})\\n`;
+    const userLink = senderUrl ? `[${senderName}](${senderUrl})` : senderName;
+
+    const repoName = escapeMarkdownV2(repo?.full_name || "");
+    const repoUrl = repo?.html_url;
+    // Repo link is constructed only if repoName is known
+    const repoLink = repoName
+        ? repoUrl
+            ? `[${repoName}](${repoUrl})`
+            : repoName
+        : "";
+    // Context usually includes 'in repoLink' but varies for org/repo-level events
+    const repoContext = repoLink ? `in ${repoLink}` : "";
+
+    let message = "";
+    const action = payload.action; // Common field
+
+    // Helper for status icons
+    const getStatusIcon = (status, conclusion) => {
+        if (status === "completed") {
+            switch (conclusion) {
+                case "success":
+                    return "✅";
+                case "failure":
+                    return "❌";
+                case "cancelled":
+                    return "🚫";
+                case "skipped":
+                    return "⏭️";
+                default:
+                    return "🏁"; // Neutral completion
+            }
+        }
+        if (status === "queued") return "⏳";
+        if (status === "waiting") return "⏳";
+        if (status === "in_progress") return "⚙️";
+        if (status === "requested") return "🙋";
+        return "ℹ️"; // Default info icon
+    };
 
     switch (eventType) {
-        case "push": {
-            const ref = escapeMarkdownV2(payload.ref); // e.g., refs/heads/main
-            const branch = escapeMarkdownV2(
-                payload.ref.replace("refs/heads/", "").replace("refs/tags/", "")
-            );
-            const commits = payload.commits || [];
-            const commitCount = commits.length;
-            const compareUrl = payload.compare;
-
-            if (commitCount === 0 && payload.forced) {
-                message += `*Force Pushed* to branch \`${branch}\` \\(no new commits\\)\\. [Compare changes](${compareUrl})`;
-            } else if (commitCount > 0) {
-                message += `*Pushed ${commitCount} commit${
-                    commitCount > 1 ? "s" : ""
-                }* to branch \`${branch}\`\\. [Compare changes](${compareUrl})\\n`;
-                commits.slice(0, 3).forEach((commit, index) => {
-                    const commitMsg = escapeMarkdownV2(
-                        commit.message.split("\n")[0]
-                    ); // First line only
-                    const commitShaShort = escapeMarkdownV2(
-                        commit.id.substring(0, 7)
-                    );
-                    const commitUrl = commit.url;
-                    message += `  \\- [${commitShaShort}](${commitUrl}) ${commitMsg} \\- _${escapeMarkdownV2(
-                        commit.author.name || commit.author.username
-                    )}_\\n`;
-                });
-                if (commitCount > 3) {
-                    message += `  \\.\\.\\. and ${commitCount - 3} more\\.\\n`;
-                }
-            } else if (
-                payload.deleted &&
-                payload.ref.startsWith("refs/tags/")
-            ) {
-                // Handled by 'delete' event, although it may appear here too sometimes
-                message = ""; // Avoid duplicate message if handled by 'delete'
-            } else {
-                message += `Pushed to \`${ref}\` \\(no commits detected in payload, check compare link\\)\\. [Compare changes](${compareUrl})`;
-            }
-            break;
-        }
-
-        case "pull_request": {
-            const pr = payload.pull_request;
-            const prNumber = pr.number;
-            const prTitle = escapeMarkdownV2(pr.title);
-            const prUrl = pr.html_url;
-            const action = escapeMarkdownV2(payload.action);
-            const merged = pr.merged;
-
-            message += `*Pull Request #${prNumber}: ${prTitle}* [${action}](${prUrl})`;
-            if (action === "closed") {
-                message += merged ? " \\(*Merged*\\)" : " \\(*Not Merged*\\)";
-            } else if (action === "assigned") {
-                message += ` to ${escapeMarkdownV2(
-                    payload.assignee?.login || "someone"
-                )}`;
-            } else if (action === "labeled") {
-                message += ` with label \`${escapeMarkdownV2(
-                    payload.label?.name || ""
-                )}\``;
-            }
-            break;
-        }
-
-        case "issues": {
-            const issue = payload.issue;
-            const issueNumber = issue.number;
-            const issueTitle = escapeMarkdownV2(issue.title);
-            const issueUrl = issue.html_url;
-            const action = escapeMarkdownV2(payload.action); // opened, closed, labeled, assigned, etc.
-
-            message += `*Issue #${issueNumber}: ${issueTitle}* [${action}](${issueUrl})`;
-            if (action === "assigned") {
-                message += ` to ${escapeMarkdownV2(
-                    payload.assignee?.login || "someone"
-                )}`;
-            } else if (action === "labeled") {
-                message += ` with label \`${escapeMarkdownV2(
-                    payload.label?.name || ""
-                )}\``;
-            }
-            break;
-        }
-
-        case "issue_comment": {
-            const issue = payload.issue;
-            const comment = payload.comment;
-            const action = escapeMarkdownV2(payload.action);
-            const issueNumber = issue.number;
-            const issueTitle = escapeMarkdownV2(issue.title);
-            const commentUrl = comment.html_url;
-            // Shorten comment body for preview
-            let commentBody = escapeMarkdownV2(comment.body.substring(0, 150));
-            if (comment.body.length > 150) {
-                commentBody += "\\.\\.\\.";
-            }
-
-            if (action === "created") {
-                message += `*New Comment* on Issue [#${issueNumber} ${issueTitle}](${commentUrl})\\n`;
-                message += `> ${commentBody}`;
-            } else {
-                message += `Comment ${action} on Issue [#${issueNumber} ${issueTitle}](${commentUrl})`;
-            }
-            break;
-        }
-
-        case "commit_comment": {
-            const comment = payload.comment;
-            const action = escapeMarkdownV2(payload.action); // typically 'created'
-            const commitShaShort = escapeMarkdownV2(
-                comment.commit_id.substring(0, 7)
-            );
-            const commentUrl = comment.html_url;
-            let commentBody = escapeMarkdownV2(comment.body.substring(0, 150));
-            if (comment.body.length > 150) {
-                commentBody += "\\.\\.\\.";
-            }
-
-            if (action === "created") {
-                message += `*New Comment* on Commit [\`${commitShaShort}\`](${commentUrl})\\n`;
-                message += `> ${commentBody}`;
-            } else {
-                message += `Comment ${action} on Commit [\`${commitShaShort}\`](${commentUrl})`;
-            }
-            break;
-        }
-
-        case "release": {
-            const release = payload.release;
-            const action = escapeMarkdownV2(payload.action); // published, created, edited, deleted, etc.
-            const tagName = escapeMarkdownV2(release.tag_name);
-            const releaseName = escapeMarkdownV2(
-                release.name || `Release ${tagName}`
-            );
-            const releaseUrl = release.html_url;
-
-            message += `*Release ${releaseName}* (${tagName}) [${action}](${releaseUrl})`;
-            if (action === "published" && release.body) {
-                let releaseNotes = escapeMarkdownV2(
-                    release.body.substring(0, 200)
-                );
-                if (release.body.length > 200) {
-                    releaseNotes += "\\.\\.\\.";
-                }
-                message += `\\n> ${releaseNotes}`;
-            }
-            break;
-        }
-
+        // == Branch / Tag / Repo Structure ==
         case "create": {
-            const refType = escapeMarkdownV2(payload.ref_type);
-            const refName = escapeMarkdownV2(payload.ref);
-            message += `*Created ${refType}*: \`${refName}\``;
+            // Branch or tag created
+            const refType = escapeMarkdownV2(payload.ref_type || "item");
+            const refName = escapeMarkdownV2(payload.ref || "unknown");
+            message = `${userLink} 🌱 created ${refType} \`${refName}\` ${repoContext}`;
             break;
         }
-
         case "delete": {
-            const refType = escapeMarkdownV2(payload.ref_type);
-            const refName = escapeMarkdownV2(payload.ref);
-            message += `*Deleted ${refType}*: \`${refName}\``;
+            // Branch or tag deleted
+            const refType = escapeMarkdownV2(payload.ref_type || "item");
+            const refName = escapeMarkdownV2(payload.ref || "unknown");
+            message = `${userLink} 🗑️ deleted ${refType} \`${refName}\` from ${repoLink}`;
             break;
         }
-
-        case "fork": {
-            const forkee = payload.forkee;
-            const forkeeName = escapeMarkdownV2(forkee.full_name);
-            const forkeeUrl = forkee.html_url;
-            message += `*Forked* repository to [${forkeeName}](${forkeeUrl})`;
-            break;
-        }
-
-        case "star": {
-            const action = payload.action;
-            if (action === "created") {
-                const stargazerCount = payload.repository.stargazers_count;
-                message += `*Starred* repository ⭐ \\(${escapeMarkdownV2(
-                    stargazerCount.toString()
-                )} total\\)`;
-            } else if (action === "deleted") {
-                const stargazerCount = payload.repository.stargazers_count;
-                message += `*Unstarred* repository 💔 \\(${escapeMarkdownV2(
-                    stargazerCount.toString()
-                )} total\\)`;
-            } else {
-                message = "";
+        case "repository": {
+            // Repo life cycle events
+            const repoNameLink = payload.repository?.html_url
+                ? `[${escapeMarkdownV2(payload.repository.full_name)}](${
+                      payload.repository.html_url
+                  })`
+                : escapeMarkdownV2(
+                      payload.repository?.full_name || "repository"
+                  );
+            let verb = escapeMarkdownV2(action);
+            switch (action) {
+                case "created":
+                    verb = `✨ created repository ${repoNameLink}`;
+                    break;
+                case "deleted":
+                    verb = `🗑️ deleted repository \`${escapeMarkdownV2(
+                        payload.repository.full_name
+                    )}\``;
+                    break; // Link might be dead
+                case "archived":
+                    verb = `📦 archived repository ${repoNameLink}`;
+                    break;
+                case "unarchived":
+                    verb = `🔓 unarchived repository ${repoNameLink}`;
+                    break;
+                case "publicized":
+                    verb = `🌎 made repository ${repoNameLink} public`;
+                    break;
+                case "privatized":
+                    verb = `🔒 made repository ${repoNameLink} private`;
+                    break;
+                case "edited":
+                    verb = `✏️ edited repository ${repoNameLink}`;
+                    break; // Could detail changes if needed
+                case "renamed":
+                    verb = `✏️ renamed repository from \`${escapeMarkdownV2(
+                        payload.changes?.repository?.name?.from || "?"
+                    )}\` to ${repoNameLink}`;
+                    break;
+                case "transferred":
+                    verb = `↔️ transferred repository ${repoNameLink} (New owner: ${escapeMarkdownV2(
+                        payload.repository.owner?.login || "?"
+                    )})`;
+                    break;
+                default:
+                    verb = `performed action \`${verb}\` on repository ${repoNameLink}`;
             }
+            message = `${userLink} ${verb}`;
             break;
         }
-
-        case "watch": {
-            const action = payload.action;
-            if (action === "started") {
-                const watcherCount = payload.repository.watchers_count;
-                message += `*Started Watching* repository 👀 \\(${escapeMarkdownV2(
-                    watcherCount.toString()
-                )} total\\)`;
-            } else {
-                message = "";
+        case "branch_protection_rule": {
+            // Branch protection rule changes
+            const rule = payload.rule;
+            const ruleName = rule
+                ? `rule for \`${escapeMarkdownV2(
+                      rule.name || rule.pattern || "?"
+                  )}\``
+                : "a branch protection rule"; // Use name or pattern if available
+            let verb = escapeMarkdownV2(action);
+            switch (action) {
+                case "created":
+                    verb = `🛡️ created ${ruleName}`;
+                    break;
+                case "edited":
+                    verb = `✏️ edited ${ruleName}`;
+                    break;
+                case "deleted":
+                    verb = `🗑️ deleted ${ruleName}`;
+                    break;
+                default:
+                    verb = `performed action \`${verb}\` on ${ruleName}`;
             }
+            message = `${userLink} ${verb} ${repoContext}`;
             break;
         }
-        
-        case "pull_request_review_comment": {
-            // TODO: Handle PR review comment
-            break;
-        }
-        
-        case "discussion": {
-            // TODO: Handle discussions
-            break;
-        }
-        default:
-            console.log(`Unsupported GitHub event type: ${eventType}`);
-            message = "";
-            break;
-    }
+        // Note: 'branch_protection_configurations' event doesn't seem standard. Rule event covers specifics.
 
-    // Return empty message if no specific handler produced content for the event/action
-    if (
-        message.startsWith(
-            `*Repo:* [${repoName}](${
-                repoUrl || "#"
-            }) \\| *By:* [${senderName}](${senderUrl || "#"})\\n`
-        )
-    ) {
-        // Check if anything was added after the standard header
-        if (
-            message.length ===
-            `*Repo:* [${repoName}](${
-                repoUrl || "#"
-            }) \\| *By:* [${senderName}](${senderUrl || "#"})\\n`.length
-        ) {
-            console.log(
-                `No specific message generated for event: ${eventType} and action: ${
-                    payload.action || "N/A"
-                }`
+        // == CI/CD & Automation ==
+        case "workflow_job": {
+            const job = payload.workflow_job;
+            const jobName = escapeMarkdownV2(job?.name || "job");
+            const status = job?.status; // queued, in_progress, completed, waiting
+            const conclusion = job?.conclusion; // success, failure, cancelled, skipped (only if status=completed)
+            const icon = getStatusIcon(status, conclusion);
+            const runUrl = job?.run_url;
+            const runLink = runUrl
+                ? `run [${escapeMarkdownV2(job.run_id)}](${runUrl})`
+                : `run ${escapeMarkdownV2(job?.run_id || "?")}`;
+            const duration = formatDuration(job?.started_at, job?.completed_at);
+
+            message = `${icon} Workflow job \`${jobName}\` ${escapeMarkdownV2(
+                status
+            )} ${
+                conclusion ? `(${escapeMarkdownV2(conclusion)}) ` : ""
+            }${duration} in ${runLink} ${repoContext}`;
+            break;
+        }
+        case "workflow_run": {
+            const run = payload.workflow_run;
+            const workflow = payload.workflow;
+            const runName = escapeMarkdownV2(
+                run?.name || workflow?.name || "workflow"
             );
-            return ""; // Don't send just the header
+            const status = run?.status; // requested, in_progress, completed, queued, waiting
+            const conclusion = run?.conclusion; // success, failure, cancelled, skipped, timed_out, action_required, neutral
+            const icon = getStatusIcon(status, conclusion);
+            const runUrl = run?.html_url;
+            const duration = formatDuration(
+                run?.run_started_at,
+                run?.updated_at
+            ); // updated_at often marks completion time
+
+            message = `${icon} Workflow run \`${runName}\` #${escapeMarkdownV2(
+                run?.run_number || "?"
+            )} ${escapeMarkdownV2(status)} ${
+                conclusion ? `(${escapeMarkdownV2(conclusion)}) ` : ""
+            }${duration} ${
+                runUrl ? `\\([View Run](${runUrl})\\) ` : ""
+            }${repoContext}`;
+            if (sender?.login !== run?.actor?.login) {
+                // If requester != actor
+                message += ` triggered by ${escapeMarkdownV2(
+                    run?.actor?.login || "?"
+                )}`;
+            }
+            break;
         }
+        case "page_build": {
+            const build = payload.build;
+            const status = build?.status; // building, built, errored
+            const pageUrl = repoUrl
+                ? `${repoUrl.replace(
+                      "github.com",
+                      escapeMarkdownV2(repo.owner.login) + ".github.io"
+                  )}/${escapeMarkdownV2(repo.name)}`
+                : ""; // Best guess for Pages URL
+            let icon = "📄";
+            let messageText = "";
+            if (status === "built") {
+                icon = "✅";
+                messageText = `GitHub Pages site built successfully ${
+                    pageUrl ? `\\([View Site](${pageUrl})\\) ` : ""
+                }${repoContext}`;
+            } else if (status === "errored") {
+                icon = "❌";
+                messageText = `GitHub Pages site build failed ${repoContext}`;
+                if (build.error?.message) {
+                    messageText += `\\n> Error: ${escapeMarkdownV2(
+                        build.error.message
+                    )}`;
+                }
+            } else if (status === "building") {
+                icon = "⚙️";
+                messageText = `GitHub Pages site build started ${repoContext}`;
+            } else {
+                messageText = `GitHub Pages build status \`${escapeMarkdownV2(
+                    status
+                )}\` ${repoContext}`;
+            }
+            message = `${icon} ${messageText}`;
+            break;
+        }
+        case "check_suite": {
+            const suite = payload.check_suite;
+            const appName = escapeMarkdownV2(suite?.app?.name || "Check Suite");
+            const status = suite?.status; // requested, in_progress, completed, queued
+            const conclusion = suite?.conclusion; // success, failure, neutral, cancelled, timed_out, action_required, stale, skipped
+            const icon = getStatusIcon(status, conclusion);
+            const branch = escapeMarkdownV2(suite?.head_branch || "?");
+
+            message = `${icon} ${appName} status \`${escapeMarkdownV2(
+                status
+            )}\` ${
+                conclusion ? `(${escapeMarkdownV2(conclusion)}) ` : ""
+            }on branch \`${branch}\` ${repoContext}`;
+            // Could add link to suite/PR if available in payload
+            break;
+        }
+        case "check_run": {
+            const run = payload.check_run;
+            const appName = escapeMarkdownV2(run?.app?.name || "Check Run");
+            const runName = escapeMarkdownV2(run?.name || "check");
+            const status = run?.status; // queued, in_progress, completed, requested, waiting, pending
+            const conclusion = run?.conclusion; // success, failure, neutral, cancelled, timed_out, action_required, stale, skipped
+            const icon = getStatusIcon(status, conclusion);
+            const runUrl = run?.html_url;
+            const duration = formatDuration(run?.started_at, run?.completed_at);
+
+            message = `${icon} ${appName} \`${runName}\` ${escapeMarkdownV2(
+                status
+            )} ${
+                conclusion ? `(${escapeMarkdownV2(conclusion)}) ` : ""
+            }${duration} ${
+                runUrl ? `\\([Details](${runUrl})\\) ` : ""
+            }${repoContext}`;
+            break;
+        }
+        case "status": {
+            // Commit status API update
+            const commitSha = escapeMarkdownV2(
+                payload.sha?.substring(0, 7) || "commit"
+            );
+            const statusState = escapeMarkdownV2(payload.state); // error, failure, pending, success
+            const context = escapeMarkdownV2(payload.context || "Status");
+            const description = escapeMarkdownV2(payload.description || "");
+            const targetUrl = payload.target_url;
+            let icon = "ℹ️";
+            if (statusState === "success") icon = "✅";
+            if (statusState === "failure" || statusState === "error")
+                icon = "❌";
+            if (statusState === "pending") icon = "⏳";
+
+            message = `${icon} Status \`${context}\` updated to \`${statusState}\` for \`${commitSha}\` ${repoContext}`;
+            if (description) message += `\\n> ${description}`;
+            if (targetUrl) message += ` \\([Details](${targetUrl})\\)`;
+            break;
+        }
+
+        // == Issues / PRs / Discussions ==
+        case "issues": {
+            // Existing logic covers most actions, added 'typed'/'untyped'
+            const issue = payload.issue;
+            const action = payload.action;
+            const issueNumber = issue?.number;
+            const issueTitle = escapeMarkdownV2(
+                issue?.title || `Issue #${issueNumber || "?"}`
+            );
+            const issueUrl = issue?.html_url;
+
+            if (!issueNumber) {
+                console.warn("Issue event missing number.");
+                return "";
+            }
+            if (!issueUrl && action !== "deleted") {
+                console.warn("Issue event missing URL.");
+                return "";
+            }
+
+            let actionText = `performed action \`${escapeMarkdownV2(
+                action
+            )}\` on`; // Fallback
+            let subject = `issue [#${issueNumber} ${issueTitle}](${
+                issueUrl || "#"
+            })`;
+            let details = "";
+
+            switch (action) {
+                case "opened":
+                    actionText = `opened`;
+                    break;
+                case "closed":
+                    actionText = `closed`;
+                    break;
+                case "reopened":
+                    actionText = `reopened`;
+                    break;
+                case "edited":
+                    actionText = `edited`;
+                    break;
+                case "assigned":
+                    actionText = `assigned`;
+                    subject = `issue [#${issueNumber}](${issueUrl})`;
+                    details = `to ${escapeMarkdownV2(
+                        payload.assignee?.login || "someone"
+                    )}`;
+                    break;
+                case "unassigned":
+                    actionText = `unassigned ${escapeMarkdownV2(
+                        payload.assignee?.login || "someone"
+                    )} from`;
+                    subject = `issue [#${issueNumber}](${issueUrl})`;
+                    break;
+                case "labeled":
+                    actionText = `added label`;
+                    subject = `\`${escapeMarkdownV2(
+                        payload.label?.name || "?"
+                    )}\` to issue [#${issueNumber}](${issueUrl})`;
+                    break;
+                case "unlabeled":
+                    actionText = `removed label`;
+                    subject = `\`${escapeMarkdownV2(
+                        payload.label?.name || "?"
+                    )}\` from issue [#${issueNumber}](${issueUrl})`;
+                    break;
+                case "locked":
+                    actionText = `locked conversation on`;
+                    details = payload.issue?.active_lock_reason
+                        ? `(reason: _${escapeMarkdownV2(
+                              payload.issue.active_lock_reason
+                          )}_)`
+                        : "";
+                    break;
+                case "unlocked":
+                    actionText = `unlocked conversation on`;
+                    break;
+                case "deleted":
+                    actionText = `deleted`;
+                    subject = `issue \`#${issueNumber} ${issueTitle}\``; // URL is invalid
+                    break;
+                case "transferred":
+                    actionText = `transferred`;
+                    break;
+                case "pinned":
+                    actionText = `📌 pinned`;
+                    break;
+                case "unpinned":
+                    actionText = `📌 unpinned`;
+                    break;
+                case "milestoned":
+                    actionText = `added`;
+                    subject = `issue [#${issueNumber}](${issueUrl}) to milestone \`${escapeMarkdownV2(
+                        payload.milestone?.title || "?"
+                    )}\``;
+                    break;
+                case "demilestoned":
+                    actionText = `removed`;
+                    subject = `issue [#${issueNumber}](${issueUrl}) from milestone \`${escapeMarkdownV2(
+                        payload.milestone?.title || "?"
+                    )}\``;
+                    break;
+                case "typed": // New Issue type field
+                    actionText = `changed type of`;
+                    subject = `issue [#${issueNumber}](${issueUrl})`;
+                    // Payload structure for 'typed' needs confirmation - assuming 'issue.type' exists
+                    details = payload.issue?.type
+                        ? `to \`${escapeMarkdownV2(payload.issue.type)}\``
+                        : "";
+                    break;
+                case "untyped": // Hypothetical - not standard? Handle similarly if it exists.
+                    actionText = `removed type from`;
+                    subject = `issue [#${issueNumber}](${issueUrl})`;
+                    break;
+                default:
+                    actionText = `performed action \`${escapeMarkdownV2(
+                        action
+                    )}\` on`;
+            }
+            message = `${userLink} ${actionText} ${subject} ${details} ${repoContext}`;
+            break;
+        }
+        case "pull_request": {
+            // Existing logic covers most, added 'enqueued', 'dequeued'
+            const pr = payload.pull_request;
+            const action = payload.action;
+            const prNumber = pr?.number;
+            const prTitle = escapeMarkdownV2(
+                pr?.title || `PR #${prNumber || "?"}`
+            );
+            const prUrl = pr?.html_url;
+
+            if (!prNumber || !prUrl) {
+                console.warn("PR event missing number or URL.");
+                return "";
+            }
+
+            let actionText = `performed action \`${escapeMarkdownV2(
+                action
+            )}\` on`; // Fallback
+            let subject = `pull request [#${prNumber} ${prTitle}](${prUrl})`;
+            let details = "";
+
+            switch (action) {
+                case "opened":
+                    actionText = `opened`;
+                    break;
+                case "closed":
+                    actionText = pr?.merged ? `✅ merged` : `closed`;
+                    if (pr?.merged_by)
+                        details = `by ${escapeMarkdownV2(pr.merged_by.login)}`;
+                    break;
+                case "reopened":
+                    actionText = `reopened`;
+                    break;
+                case "edited":
+                    actionText = `edited`;
+                    break;
+                case "assigned":
+                    actionText = `assigned`;
+                    subject = `pull request [#${prNumber}](${prUrl})`;
+                    details = `to ${escapeMarkdownV2(
+                        payload.assignee?.login || "someone"
+                    )}`;
+                    break;
+                case "unassigned":
+                    actionText = `unassigned ${escapeMarkdownV2(
+                        payload.assignee?.login || "someone"
+                    )} from`;
+                    subject = `pull request [#${prNumber}](${prUrl})`;
+                    break;
+                case "review_requested":
+                    actionText = `requested a review from`;
+                    let reviewer = "someone";
+                    if (payload.requested_reviewer)
+                        reviewer = escapeMarkdownV2(
+                            payload.requested_reviewer.login
+                        );
+                    else if (payload.requested_team)
+                        reviewer = `team \`${escapeMarkdownV2(
+                            payload.requested_team.name
+                        )}\``;
+                    subject = `${reviewer} on pull request [#${prNumber}](${prUrl})`;
+                    break;
+                case "review_request_removed":
+                    actionText = `removed review request for`;
+                    let removedReviewer = "someone";
+                    if (payload.requested_reviewer)
+                        removedReviewer = escapeMarkdownV2(
+                            payload.requested_reviewer.login
+                        );
+                    else if (payload.requested_team)
+                        removedReviewer = `team \`${escapeMarkdownV2(
+                            payload.requested_team.name
+                        )}\``;
+                    subject = `${removedReviewer} on pull request [#${prNumber}](${prUrl})`;
+                    break;
+                case "labeled":
+                    actionText = `added label`;
+                    subject = `\`${escapeMarkdownV2(
+                        payload.label?.name || "?"
+                    )}\` to pull request [#${prNumber}](${prUrl})`;
+                    break;
+                case "unlabeled":
+                    actionText = `removed label`;
+                    subject = `\`${escapeMarkdownV2(
+                        payload.label?.name || "?"
+                    )}\` from pull request [#${prNumber}](${prUrl})`;
+                    break;
+                case "synchronize":
+                    actionText = `pushed updates to`;
+                    break;
+                case "ready_for_review":
+                    actionText = `marked as ready for review`;
+                    break;
+                case "converted_to_draft":
+                    actionText = `marked as draft`;
+                    break;
+                case "locked":
+                    actionText = `locked conversation on`;
+                    details = payload.pull_request?.active_lock_reason
+                        ? `(reason: _${escapeMarkdownV2(
+                              payload.pull_request.active_lock_reason
+                          )}_)`
+                        : "";
+                    break;
+                case "unlocked":
+                    actionText = `unlocked conversation on`;
+                    break;
+                case "auto_merge_enabled":
+                    actionText = `enabled auto\\-merge on`;
+                    break;
+                case "auto_merge_disabled":
+                    actionText = `disabled auto\\-merge on`;
+                    break;
+                case "milestoned":
+                    actionText = `added`;
+                    subject = `pull request [#${prNumber}](${prUrl}) to milestone \`${escapeMarkdownV2(
+                        payload.milestone?.title || "?"
+                    )}\``;
+                    break;
+                case "demilestoned":
+                    actionText = `removed`;
+                    subject = `pull request [#${prNumber}](${prUrl}) from milestone \`${escapeMarkdownV2(
+                        payload.milestone?.title || "?"
+                    )}\``;
+                    break;
+                case "enqueued":
+                    actionText = `enqueued`;
+                    break; // Merge Queue
+                case "dequeued":
+                    actionText = `dequeued`;
+                    break; // Merge Queue
+                default:
+                    actionText = `performed action \`${escapeMarkdownV2(
+                        action
+                    )}\` on`;
+            }
+            message = `${userLink} ${actionText} ${subject} ${details} ${repoContext}`;
+            break;
+        }
+        case "pull_request_review": {
+            const review = payload.review;
+            const pr = payload.pull_request;
+            const prNumber = pr?.number;
+            const prUrl = pr?.html_url;
+            const reviewState = escapeMarkdownV2(review?.state); // commented, approved, changes_requested, dismissed
+            const reviewUrl = review?.html_url;
+
+            if (!prNumber || !prUrl) {
+                console.warn("PR Review event missing PR info.");
+                return "";
+            }
+
+            let actionText = `submitted a review`;
+            let stateText = `(\`${reviewState}\`)`;
+            let icon = "👀";
+            if (reviewState === "approved") {
+                icon = "✅";
+                stateText = `approved the changes`;
+            }
+            if (reviewState === "changes_requested") {
+                icon = "⚠️";
+                stateText = `requested changes`;
+            }
+            if (reviewState === "commented") {
+                icon = "💬";
+                stateText = `commented`;
+            }
+            if (reviewState === "dismissed") {
+                icon = "🚫";
+                stateText = `dismissed a review`;
+            }
+
+            message = `${userLink} ${icon} ${stateText} on pull request [#${prNumber}](${prUrl}) ${
+                reviewUrl ? `\\([View Review](${reviewUrl})\\) ` : ""
+            }${repoContext}`;
+            // Add review body preview if it exists and state is 'commented' or has a body
+            if (review?.body) {
+                let body = escapeMarkdownV2(review.body.substring(0, 150));
+                if (review.body.length > 150) body += "\\.\\.\\.";
+                if (body) message += `\\n> ${body}`;
+            }
+            break;
+        }
+        case "pull_request_review_thread": {
+            const thread = payload.thread;
+            const pr = payload.pull_request;
+            const prNumber = pr?.number;
+            const prUrl = pr?.html_url;
+
+            if (!prNumber || !prUrl || !thread?.comments?.length) {
+                console.warn("PR Review Thread event missing info.");
+                return "";
+            }
+
+            // Get URL of the first comment in the thread as context
+            const threadUrl = thread.comments[0].html_url;
+            let verb = escapeMarkdownV2(action);
+            if (action === "resolved") verb = "✅ resolved a review thread";
+            if (action === "unresolved") verb = " reopened a review thread";
+
+            message = `${userLink} ${verb} on pull request [#${prNumber}](${prUrl}) ${
+                threadUrl ? `\\([View Thread](${threadUrl})\\) ` : ""
+            }${repoContext}`;
+            break;
+        }
+        case "issue_comment":
+        case "pull_request_review_comment": {
+            // Handles comments on PR diffs
+            const comment = payload.comment;
+            const action = payload.action;
+            const issue = payload.issue; // Issue context (for issue comments)
+            const pr = payload.pull_request; // PR context (for PR review comments)
+            const commentUrl = comment?.html_url;
+            let targetLink = "an item"; // Fallback
+
+            // Determine target based on available context
+            if (pr?.number) {
+                targetLink = `pull request [#${pr.number} ${escapeMarkdownV2(
+                    pr.title || ""
+                )}](${pr.html_url || "#"})`;
+            } else if (issue?.number) {
+                targetLink = `issue [#${issue.number} ${escapeMarkdownV2(
+                    issue.title || ""
+                )}](${issue.html_url || "#"})`;
+            }
+
+            if (!commentUrl || action === "deleted") {
+                message = `${userLink} ${escapeMarkdownV2(
+                    action
+                )} a comment on ${targetLink} ${repoContext}`;
+            } else {
+                let verb = "commented on";
+                if (action === "edited") verb = "edited a comment on";
+                message = `${userLink} ${verb} ${targetLink} ${repoContext} \\([View Comment](${commentUrl})\\)`;
+                let body = escapeMarkdownV2(
+                    (comment.body || "").substring(0, 150)
+                );
+                if (comment.body && comment.body.length > 150)
+                    body += "\\.\\.\\.";
+                if (body) message += `\\n> ${body}`;
+            }
+            break;
+        }
+        case "commit_comment": {
+            // Comment on a specific commit (not part of a PR review)
+            const comment = payload.comment;
+            const action = payload.action;
+            const commitShaShort = escapeMarkdownV2(
+                comment?.commit_id?.substring(0, 7) || "unknown"
+            );
+            const commentUrl = comment?.html_url;
+
+            if (!commentUrl || action === "deleted") {
+                message = `${userLink} ${escapeMarkdownV2(
+                    action
+                )} a comment on commit \`${commitShaShort}\` ${repoContext}`;
+            } else {
+                let verb = "commented on";
+                if (action === "edited") verb = "edited a comment on";
+                message = `${userLink} ${verb} commit [\`${commitShaShort}\`](${commentUrl}) ${repoContext}`;
+                let body = escapeMarkdownV2(
+                    (comment.body || "").substring(0, 150)
+                );
+                if (comment.body && comment.body.length > 150)
+                    body += "\\.\\.\\.";
+                if (body) message += `\\n> ${body}`;
+            }
+            break;
+        }
+        case "discussion": {
+            const discussion = payload.discussion;
+            const discussionTitle = escapeMarkdownV2(
+                discussion?.title || "discussion"
+            );
+            const discussionUrl = discussion?.html_url;
+            let verb = escapeMarkdownV2(action);
+            let details = "";
+
+            switch (action) {
+                case "created":
+                    verb = `💬 created discussion [${discussionTitle}](${discussionUrl})`;
+                    break;
+                case "edited":
+                    verb = `✏️ edited discussion [${discussionTitle}](${discussionUrl})`;
+                    break;
+                case "deleted":
+                    verb = `🗑️ deleted discussion \`${discussionTitle}\``;
+                    break;
+                case "pinned":
+                    verb = `📌 pinned discussion [${discussionTitle}](${discussionUrl})`;
+                    break;
+                case "unpinned":
+                    verb = `📌 unpinned discussion [${discussionTitle}](${discussionUrl})`;
+                    break;
+                case "locked":
+                    verb = `🔒 locked discussion [${discussionTitle}](${discussionUrl})`;
+                    break;
+                case "unlocked":
+                    verb = `🔓 unlocked discussion [${discussionTitle}](${discussionUrl})`;
+                    break;
+                case "transferred":
+                    verb = `↔️ transferred discussion [${discussionTitle}](${discussionUrl})`;
+                    break;
+                case "category_changed":
+                    verb = `🔄 changed category for discussion [${discussionTitle}](${discussionUrl})`;
+                    break;
+                case "answered":
+                    verb = `✅ marked discussion [${discussionTitle}](${discussionUrl}) as answered`;
+                    break;
+                case "unanswered":
+                    verb = `❓ marked discussion [${discussionTitle}](${discussionUrl}) as unanswered`;
+                    break;
+                case "labeled":
+                    details = `label \`${escapeMarkdownV2(
+                        payload.label?.name || "?"
+                    )}\` to`;
+                    verb = `added ${details} discussion [${discussionTitle}](${discussionUrl})`;
+                    break;
+                case "unlabeled":
+                    details = `label \`${escapeMarkdownV2(
+                        payload.label?.name || "?"
+                    )}\` from`;
+                    verb = `removed ${details} discussion [${discussionTitle}](${discussionUrl})`;
+                    break;
+                default:
+                    verb = `performed action \`${verb}\` on discussion [${discussionTitle}](${discussionUrl})`;
+            }
+            message = `${userLink} ${verb} ${repoContext}`;
+            break;
+        }
+        case "discussion_comment": {
+            const comment = payload.comment;
+            const discussion = payload.discussion;
+            const commentUrl = comment?.html_url;
+            const discussionLink = discussion?.html_url
+                ? `discussion [${escapeMarkdownV2(discussion.title)}](${
+                      discussion.html_url
+                  })`
+                : "a discussion";
+
+            if (!commentUrl || action === "deleted") {
+                message = `${userLink} ${escapeMarkdownV2(
+                    action
+                )} a comment on ${discussionLink} ${repoContext}`;
+            } else {
+                let verb = "commented on";
+                if (action === "edited") verb = "edited a comment on";
+                message = `${userLink} ${verb} ${discussionLink} ${repoContext} \\([View Comment](${commentUrl})\\)`;
+                let body = escapeMarkdownV2(
+                    (comment.body || "").substring(0, 150)
+                );
+                if (comment.body && comment.body.length > 150)
+                    body += "\\.\\.\\.";
+                if (body) message += `\\n> ${body}`;
+            }
+            break;
+        }
+        case "label": {
+            // Label definition created/edited/deleted
+            const labelName = escapeMarkdownV2(payload.label?.name || "label");
+            let verb = escapeMarkdownV2(action);
+            switch (action) {
+                case "created":
+                    verb = `🏷️ created label \`${labelName}\``;
+                    break;
+                case "edited":
+                    verb = `✏️ edited label \`${labelName}\``;
+                    break;
+                case "deleted":
+                    verb = `🗑️ deleted label \`${labelName}\``;
+                    break;
+                default:
+                    verb = `performed action \`${verb}\` on label \`${labelName}\``;
+            }
+            message = `${userLink} ${verb} ${repoContext}`;
+            break;
+        }
+
+        // == Security & Dependencies ==
+        case "dependabot_alert": {
+            const alert = payload.alert;
+            const state = alert?.state; // open, fixed, dismissed, auto_dismissed, auto_reopened
+            const severity = escapeMarkdownV2(
+                alert?.security_advisory?.severity || "?"
+            ); // low, medium, high, critical
+            const packageName = escapeMarkdownV2(
+                alert?.security_vulnerability?.package?.name || "dependency"
+            );
+            const alertUrl = alert?.html_url;
+            let verb = escapeMarkdownV2(action);
+            let icon = "⚠️";
+
+            switch (action) {
+                case "created":
+                    verb = `created Dependabot alert (\`${severity}\`) for \`${packageName}\``;
+                    break;
+                case "fixed":
+                    verb = `✅ fixed Dependabot alert for \`${packageName}\``;
+                    icon = "✅";
+                    break;
+                case "dismissed":
+                    verb = `🚫 dismissed Dependabot alert for \`${packageName}\``;
+                    icon = "🚫";
+                    break;
+                case "reopened":
+                    verb = `reopened Dependabot alert for \`${packageName}\``;
+                    break;
+                case "auto_dismissed":
+                    verb = `🚫 auto\\-dismissed Dependabot alert for \`${packageName}\``;
+                    icon = "🚫";
+                    break;
+                case "auto_reopened":
+                    verb = `reopened Dependabot alert for \`${packageName}\``;
+                    break;
+                case "reintroduced":
+                    verb = `🔄 reintroduced Dependabot alert for \`${packageName}\``;
+                    break;
+                default:
+                    verb = `performed action \`${verb}\` on Dependabot alert for \`${packageName}\``;
+            }
+            message = `${userLink} ${icon} ${verb} ${repoContext} ${
+                alertUrl ? `\\([Details](${alertUrl})\\)` : ""
+            }`;
+            break;
+        }
+        case "code_scanning_alert": {
+            const alert = payload.alert;
+            const ruleDesc = escapeMarkdownV2(
+                alert?.rule?.description || "Code scanning rule"
+            );
+            const alertUrl = alert?.html_url;
+            const alertNumber = alert?.number;
+            let verb = escapeMarkdownV2(action);
+            let icon = "🛡️";
+
+            switch (action) {
+                case "created":
+                    verb = `found new alert [#${alertNumber}](${alertUrl}): ${ruleDesc}`;
+                    break;
+                case "fixed":
+                    verb = `✅ fixed alert [#${alertNumber}](${alertUrl}): ${ruleDesc}`;
+                    icon = "✅";
+                    break;
+                case "closed_by_user":
+                    verb = `🚫 closed alert [#${alertNumber}](${alertUrl}) as "${escapeMarkdownV2(
+                        alert.dismissed_reason || "?"
+                    )}"`;
+                    icon = "🚫";
+                    break; // Reason: false positive, won't fix, used in tests
+                case "reopened_by_user":
+                    verb = ` reopened alert [#${alertNumber}](${alertUrl}): ${ruleDesc}`;
+                    break;
+                case "reopened":
+                    verb = ` reopened alert [#${alertNumber}](${alertUrl}): ${ruleDesc}`;
+                    break; // Generic reopen
+                case "appeared_in_branch":
+                    verb = `alert [#${alertNumber}](${alertUrl}) appeared in branch \`${escapeMarkdownV2(
+                        payload.ref || "?"
+                    )}\``;
+                    break;
+                // Add more actions if needed: closed (by system), dismissed (deprecated alias)
+                default:
+                    verb = `performed action \`${verb}\` on alert [#${alertNumber}](${alertUrl}): ${ruleDesc}`;
+            }
+            message = `${
+                userLink ||
+                escapeMarkdownV2(
+                    payload.commit_oid?.substring(0, 7) || "Code Scanning"
+                )
+            } ${icon} ${verb} ${repoContext}`;
+            break;
+        }
+
+        // == Misc / Meta ==
+        case "fork": {
+            // Repo forked
+            const forkeeName = escapeMarkdownV2(
+                payload.forkee?.full_name || "unknown"
+            );
+            const forkeeUrl = payload.forkee?.html_url;
+            const forkeeLink = forkeeUrl
+                ? `[${forkeeName}](${forkeeUrl})`
+                : forkeeName;
+            message = `${userLink} 🍴 forked ${repoLink} to ${forkeeLink}`;
+            break;
+        }
+        case "star": {
+            // Repo starred/unstarred
+            if (action === "created")
+                message = `${userLink} 🌟 starred ${repoLink}`;
+            else if (action === "deleted")
+                message = `${userLink} 💔 unstarred ${repoLink}`;
+            else message = "";
+            break;
+        }
+        case "watch": {
+            // User starts watching (legacy - star is preferred)
+            if (action === "started")
+                message = `${userLink} 👀 started watching ${repoLink}`;
+            else message = "";
+            break;
+        }
+        case "release": {
+            // Release published, edited, etc.
+            const release = payload.release;
+            const tagName = escapeMarkdownV2(release?.tag_name || "tag?");
+            const releaseName = escapeMarkdownV2(
+                release?.name || tagName || "release?"
+            );
+            const releaseUrl = release?.html_url;
+
+            if (!releaseUrl && action !== "deleted") {
+                message = `${userLink} performed action \`${escapeMarkdownV2(
+                    action
+                )}\` on release \`${releaseName}\` ${repoContext}`;
+            } else {
+                let actionText = `performed action \`${escapeMarkdownV2(
+                    action
+                )}\` on`;
+                let subject = `release [${releaseName}](${releaseUrl || "#"})`;
+                switch (action) {
+                    case "published":
+                        actionText = `📦 published`;
+                        break;
+                    case "unpublished":
+                        actionText = `unpublished`;
+                        break;
+                    case "created":
+                        actionText = `created release draft`;
+                        break;
+                    case "edited":
+                        actionText = `edited`;
+                        break;
+                    case "deleted":
+                        actionText = `deleted`;
+                        subject = `release \`${releaseName}\``;
+                        break;
+                    case "prereleased":
+                        actionText = `published pre-release`;
+                        break;
+                    case "released":
+                        actionText = `published release`;
+                        break;
+                }
+                message = `${userLink} ${actionText} ${subject} ${repoContext}`;
+
+                if (
+                    [
+                        "published",
+                        "created",
+                        "prereleased",
+                        "released",
+                    ].includes(action) &&
+                    release?.body
+                ) {
+                    let notes = escapeMarkdownV2(
+                        release.body.substring(0, 200)
+                    );
+                    if (release.body.length > 200) notes += "\\.\\.\\.";
+                    if (notes) message += `\\n> ${notes}`;
+                }
+            }
+            break;
+        }
+        case "package": {
+            // GitHub Package published/updated
+            const pkg = payload.package;
+            const pkgVersion = escapeMarkdownV2(
+                pkg?.package_version?.version || "?"
+            );
+            const pkgName = escapeMarkdownV2(pkg?.name || "package");
+            const pkgType = escapeMarkdownV2(pkg?.package_type || "?"); // npm, maven, docker, nuget, rubygems, container
+            const pkgUrl = pkg?.html_url;
+            let verb = escapeMarkdownV2(action);
+            if (action === "published")
+                verb = `📦 published ${pkgType} package \`${pkgName}\` version \`${pkgVersion}\``;
+            if (action === "updated")
+                verb = `🔄 updated ${pkgType} package \`${pkgName}\``; // Might not include version
+
+            message = `${userLink} ${verb} ${repoContext} ${
+                pkgUrl ? `\\([View Package](${pkgUrl})\\)` : ""
+            }`;
+            break;
+        }
+        case "gollum": {
+            // Wiki page updated
+            const pages = payload.pages || [];
+            const pageCount = pages.length;
+            if (pageCount > 0) {
+                const firstPage = pages[0];
+                const pageName = escapeMarkdownV2(firstPage.page_name || "?");
+                const pageAction = escapeMarkdownV2(
+                    firstPage.action || "updated"
+                ); // created, edited
+                const pageUrl = firstPage.html_url;
+                message = `${userLink} wiki page \`${pageName}\` ${pageAction} ${
+                    pageUrl ? `\\([View Page](${pageUrl})\\) ` : ""
+                }${repoContext}`;
+                if (pageCount > 1)
+                    message += ` (and ${pageCount - 1} other${
+                        pageCount > 2 ? "s" : ""
+                    })`;
+            } else {
+                message = `${userLink} updated the wiki ${repoContext}`; // Fallback
+            }
+            break;
+        }
+        case "team": {
+            // Team edited (permissions change) or repo added/removed from team
+            const teamName = escapeMarkdownV2(payload.team?.name || "team");
+            const teamUrl = payload.team?.html_url;
+            const teamLink = teamUrl
+                ? `[${teamName}](${teamUrl})`
+                : `\`${teamName}\``;
+            let verb = escapeMarkdownV2(action);
+            // Note: 'added_to_repository' / 'removed_from_repository' actions are on the REPOSITORY payload, not team event usually.
+            // This event focuses on team definition changes or adding repo TO a team.
+            switch (action) {
+                case "created":
+                    verb = `created team ${teamLink}`;
+                    break; // Org level usually
+                case "deleted":
+                    verb = `deleted team \`${teamName}\``;
+                    break; // Org level usually
+                case "edited":
+                    verb = `✏️ edited team ${teamLink}`;
+                    break;
+                case "added_to_repository":
+                    verb = `added ${repoLink} to team ${teamLink}`;
+                    break; // This is less common event trigger
+                case "removed_from_repository":
+                    verb = `removed ${repoLink} from team ${teamLink}`;
+                    break; // Less common
+                default:
+                    verb = `performed action \`${verb}\` regarding team ${teamLink}`;
+            }
+            // Sender might be less relevant if it's an org admin action
+            message = `Team action: ${verb}`; // Simpler message for team events
+            break;
+        }
+
+        default:
+            console.log(
+                `-> Unsupported GitHub event type received: ${eventType}`
+            );
+            message = ""; // No message for unsupported events by default
+            break;
     }
 
-    return message.trim();
+    return message.trim(); // Return final message or empty string
 }
 
-/**
- * Sends a message to the Telegram Bot API.
- * @param {string} text - The message text (MarkdownV2 formatted).
- * @param {object} env - The environment variables containing secrets.
- */
 async function sendTelegramMessage(text, env) {
     if (!text) {
         console.log("Skipping empty message send to Telegram.");
         return;
     }
-
+    // Check for essential secrets
     if (
         !env.COS_TELEGRAM_BOT_TOKEN ||
         !env.COS_TELEGRAM_CHAT_ID ||
         !env.COS_TELEGRAM_MESSAGE_THREAD_ID
     ) {
         console.error(
-            "Telegram secrets (TOKEN, CHAT_ID, TOPIC_ID) are not configured in worker environment."
+            "Telegram secrets (TOKEN, CHAT_ID, TOPIC_ID) missing or incomplete in worker environment."
         );
         return;
     }
 
     const telegramApiUrl = `https://api.telegram.org/bot${env.COS_TELEGRAM_BOT_TOKEN}/sendMessage`;
-    const payload = {
+    const apiPayload = {
         chat_id: env.COS_TELEGRAM_CHAT_ID,
-        message_thread_id: env.COS_TELEGRAM_MESSAGE_THREAD_ID, // Send to specific topic
+        message_thread_id: env.COS_TELEGRAM_MESSAGE_THREAD_ID,
         text: text,
         parse_mode: "MarkdownV2",
-        disable_web_page_preview: true, // disable link previews
+        disable_web_page_preview: true,
     };
 
     try {
         const response = await fetch(telegramApiUrl, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(payload),
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(apiPayload),
         });
 
         if (!response.ok) {
-            const errorData = await response.json();
+            const errorData = await response.text(); // Read body as text for detailed error info
             console.error(
-                `Telegram API Error: ${response.status} ${response.statusText}`,
-                errorData
+                `Telegram API Error: ${response.status} ${response.statusText}. ChatID: ${env.COS_TELEGRAM_CHAT_ID}, TopicID: ${env.COS_TELEGRAM_MESSAGE_THREAD_ID}. Response: ${errorData}`
             );
         } else {
-            console.log("Message successfully sent to Telegram topic.");
+            console.log(
+                `Message sent successfully to Telegram topic ${env.COS_TELEGRAM_MESSAGE_THREAD_ID}.`
+            );
         }
     } catch (error) {
-        console.error("Failed to send message to Telegram:", error);
+        console.error(
+            "Failed to send message to Telegram (network/fetch error):",
+            error
+        );
     }
 }
