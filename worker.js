@@ -151,8 +151,7 @@ function escapeMarkdownV2(text) {
     if (!text) return "";
     // Escape characters: _ * [ ] ( ) ~ ` > # + - = | { } . !
     // Need to escape backslashes first if they appear in the text
-    text = text.replace(/\\/g, "\\\\");
-    
+    //text = text.replace(/\\/g, "\\\\");
     return text.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, "\\$1");
 }
 
@@ -363,7 +362,7 @@ function formatMessage(eventType, payload, env) {
             ); // updated_at often marks completion time
             const runNumberStr = String(run?.run_number || "?");
             
-            message = `${icon} Workflow run \`${runName}\` #${escapeMarkdownV2(runNumberStr)} ${escapeMarkdownV2(status)} ${
+            message = `${icon} Workflow run \`${runName}\` \\#${escapeMarkdownV2(runNumberStr)} ${escapeMarkdownV2(status)} ${
                 conclusion ? `(${escapeMarkdownV2(conclusion)}) ` : ""
             }${duration} ${
                 runUrl ? `\\([View Run](${runUrl})\\) ` : ""
@@ -474,7 +473,7 @@ function formatMessage(eventType, payload, env) {
             const action = payload.action;
             const issueNumber = issue?.number;
             const issueTitle = escapeMarkdownV2(
-                issue?.title || `Issue #${issueNumber || "?"}`
+                issue?.title || `Issue \\#${issueNumber || "?"}`
             );
             const issueUrl = issue?.html_url;
 
@@ -490,8 +489,8 @@ function formatMessage(eventType, payload, env) {
             let actionText = `performed action \`${escapeMarkdownV2(
                 action
             )}\` on`; // Fallback
-            let subject = `issue [#${issueNumber} ${issueTitle}](${
-                issueUrl || "#"
+            let subject = `issue [\\#${issueNumber} ${issueTitle}](${
+                issueUrl || "\\#"
             })`;
             let details = "";
 
@@ -510,7 +509,7 @@ function formatMessage(eventType, payload, env) {
                     break;
                 case "assigned":
                     actionText = `assigned`;
-                    subject = `issue [#${issueNumber}](${issueUrl})`;
+                    subject = `issue [\\#${issueNumber}](${issueUrl})`;
                     details = `to ${escapeMarkdownV2(
                         payload.assignee?.login || "someone"
                     )}`;
@@ -519,19 +518,19 @@ function formatMessage(eventType, payload, env) {
                     actionText = `unassigned ${escapeMarkdownV2(
                         payload.assignee?.login || "someone"
                     )} from`;
-                    subject = `issue [#${issueNumber}](${issueUrl})`;
+                    subject = `issue [\\#${issueNumber}](${issueUrl})`;
                     break;
                 case "labeled":
                     actionText = `added label`;
                     subject = `\`${escapeMarkdownV2(
                         payload.label?.name || "?"
-                    )}\` to issue [#${issueNumber}](${issueUrl})`;
+                    )}\` to issue [\\#${issueNumber}](${issueUrl})`;
                     break;
                 case "unlabeled":
                     actionText = `removed label`;
                     subject = `\`${escapeMarkdownV2(
                         payload.label?.name || "?"
-                    )}\` from issue [#${issueNumber}](${issueUrl})`;
+                    )}\` from issue [\\#${issueNumber}](${issueUrl})`;
                     break;
                 case "locked":
                     actionText = `locked conversation on`;
@@ -546,7 +545,7 @@ function formatMessage(eventType, payload, env) {
                     break;
                 case "deleted":
                     actionText = `deleted`;
-                    subject = `issue \`#${issueNumber} ${issueTitle}\``; // URL is invalid
+                    subject = `issue \`\\#${issueNumber} ${issueTitle}\``; // URL is invalid
                     break;
                 case "transferred":
                     actionText = `transferred`;
@@ -559,19 +558,19 @@ function formatMessage(eventType, payload, env) {
                     break;
                 case "milestoned":
                     actionText = `added`;
-                    subject = `issue [#${issueNumber}](${issueUrl}) to milestone \`${escapeMarkdownV2(
+                    subject = `issue [\\#${issueNumber}](${issueUrl}) to milestone \`${escapeMarkdownV2(
                         payload.milestone?.title || "?"
                     )}\``;
                     break;
                 case "demilestoned":
                     actionText = `removed`;
-                    subject = `issue [#${issueNumber}](${issueUrl}) from milestone \`${escapeMarkdownV2(
+                    subject = `issue [\\#${issueNumber}](${issueUrl}) from milestone \`${escapeMarkdownV2(
                         payload.milestone?.title || "?"
                     )}\``;
                     break;
                 case "typed": // New Issue type field
                     actionText = `changed type of`;
-                    subject = `issue [#${issueNumber}](${issueUrl})`;
+                    subject = `issue [\\#${issueNumber}](${issueUrl})`;
                     // Payload structure for 'typed' needs confirmation - assuming 'issue.type' exists
                     details = payload.issue?.type
                         ? `to \`${escapeMarkdownV2(payload.issue.type)}\``
@@ -579,7 +578,7 @@ function formatMessage(eventType, payload, env) {
                     break;
                 case "untyped": // Hypothetical - not standard? Handle similarly if it exists.
                     actionText = `removed type from`;
-                    subject = `issue [#${issueNumber}](${issueUrl})`;
+                    subject = `issue [\\#${issueNumber}](${issueUrl})`;
                     break;
                 default:
                     actionText = `performed action \`${escapeMarkdownV2(
@@ -595,7 +594,7 @@ function formatMessage(eventType, payload, env) {
             const action = payload.action;
             const prNumber = pr?.number;
             const prTitle = escapeMarkdownV2(
-                pr?.title || `PR #${prNumber || "?"}`
+                pr?.title || `PR \\#${prNumber || "?"}`
             );
             const prUrl = pr?.html_url;
 
@@ -607,7 +606,7 @@ function formatMessage(eventType, payload, env) {
             let actionText = `performed action \`${escapeMarkdownV2(
                 action
             )}\` on`; // Fallback
-            let subject = `pull request [#${prNumber} ${prTitle}](${prUrl})`;
+            let subject = `pull request [\\#${prNumber} ${prTitle}](${prUrl})`;
             let details = "";
 
             switch (action) {
@@ -627,7 +626,7 @@ function formatMessage(eventType, payload, env) {
                     break;
                 case "assigned":
                     actionText = `assigned`;
-                    subject = `pull request [#${prNumber}](${prUrl})`;
+                    subject = `pull request [\\#${prNumber}](${prUrl})`;
                     details = `to ${escapeMarkdownV2(
                         payload.assignee?.login || "someone"
                     )}`;
@@ -636,7 +635,7 @@ function formatMessage(eventType, payload, env) {
                     actionText = `unassigned ${escapeMarkdownV2(
                         payload.assignee?.login || "someone"
                     )} from`;
-                    subject = `pull request [#${prNumber}](${prUrl})`;
+                    subject = `pull request [\\#${prNumber}](${prUrl})`;
                     break;
                 case "review_requested":
                     actionText = `requested a review from`;
@@ -649,7 +648,7 @@ function formatMessage(eventType, payload, env) {
                         reviewer = `team \`${escapeMarkdownV2(
                             payload.requested_team.name
                         )}\``;
-                    subject = `${reviewer} on pull request [#${prNumber}](${prUrl})`;
+                    subject = `${reviewer} on pull request [\\#${prNumber}](${prUrl})`;
                     break;
                 case "review_request_removed":
                     actionText = `removed review request for`;
@@ -662,19 +661,19 @@ function formatMessage(eventType, payload, env) {
                         removedReviewer = `team \`${escapeMarkdownV2(
                             payload.requested_team.name
                         )}\``;
-                    subject = `${removedReviewer} on pull request [#${prNumber}](${prUrl})`;
+                    subject = `${removedReviewer} on pull request [\\#${prNumber}](${prUrl})`;
                     break;
                 case "labeled":
                     actionText = `added label`;
                     subject = `\`${escapeMarkdownV2(
                         payload.label?.name || "?"
-                    )}\` to pull request [#${prNumber}](${prUrl})`;
+                    )}\` to pull request [\\#${prNumber}](${prUrl})`;
                     break;
                 case "unlabeled":
                     actionText = `removed label`;
                     subject = `\`${escapeMarkdownV2(
                         payload.label?.name || "?"
-                    )}\` from pull request [#${prNumber}](${prUrl})`;
+                    )}\` from pull request [\\#${prNumber}](${prUrl})`;
                     break;
                 case "synchronize":
                     actionText = `pushed updates to`;
@@ -704,13 +703,13 @@ function formatMessage(eventType, payload, env) {
                     break;
                 case "milestoned":
                     actionText = `added`;
-                    subject = `pull request [#${prNumber}](${prUrl}) to milestone \`${escapeMarkdownV2(
+                    subject = `pull request [\\#${prNumber}](${prUrl}) to milestone \`${escapeMarkdownV2(
                         payload.milestone?.title || "?"
                     )}\``;
                     break;
                 case "demilestoned":
                     actionText = `removed`;
-                    subject = `pull request [#${prNumber}](${prUrl}) from milestone \`${escapeMarkdownV2(
+                    subject = `pull request [\\#${prNumber}](${prUrl}) from milestone \`${escapeMarkdownV2(
                         payload.milestone?.title || "?"
                     )}\``;
                     break;
@@ -761,14 +760,14 @@ function formatMessage(eventType, payload, env) {
                 stateText = `dismissed a review`;
             }
 
-            message = `${userLink} ${icon} ${stateText} on pull request [#${prNumber}](${prUrl}) ${
+            message = `${userLink} ${icon} ${stateText} on pull request [\\#${prNumber}](${prUrl}) ${
                 reviewUrl ? `\\([View Review](${reviewUrl})\\) ` : ""
             }${repoContext}`;
             // Add review body preview if it exists and state is 'commented' or has a body
             if (review?.body) {
                 let body = escapeMarkdownV2(review.body.substring(0, 150));
                 if (review.body.length > 150) body += "\\.\\.\\.";
-                if (body) message += `\\n> ${body}`;
+                if (body) message += `> ${body}`;
             }
             break;
         }
@@ -789,7 +788,7 @@ function formatMessage(eventType, payload, env) {
             if (action === "resolved") verb = "✅ resolved a review thread";
             if (action === "unresolved") verb = " reopened a review thread";
 
-            message = `${userLink} ${verb} on pull request [#${prNumber}](${prUrl}) ${
+            message = `${userLink} ${verb} on pull request [\\#${prNumber}](${prUrl}) ${
                 threadUrl ? `\\([View Thread](${threadUrl})\\) ` : ""
             }${repoContext}`;
             break;
@@ -806,13 +805,13 @@ function formatMessage(eventType, payload, env) {
 
             // Determine target based on available context
             if (pr?.number) {
-                targetLink = `pull request [#${pr.number} ${escapeMarkdownV2(
+                targetLink = `pull request [\\#${pr.number} ${escapeMarkdownV2(
                     pr.title || ""
-                )}](${pr.html_url || "#"})`;
+                )}](${pr.html_url || "\\#"})`;
             } else if (issue?.number) {
-                targetLink = `issue [#${issue.number} ${escapeMarkdownV2(
+                targetLink = `issue [\\#${issue.number} ${escapeMarkdownV2(
                     issue.title || ""
-                )}](${issue.html_url || "#"})`;
+                )}](${issue.html_url || "\\#"})`;
             }
 
             if (!commentUrl || action === "deleted") {
@@ -828,7 +827,7 @@ function formatMessage(eventType, payload, env) {
                 );
                 if (comment.body && comment.body.length > 150)
                     body += "\\.\\.\\.";
-                if (body) message += `\\n> ${body}`;
+                if (body) message += `> ${body}`;
             }
             break;
         }
@@ -854,7 +853,7 @@ function formatMessage(eventType, payload, env) {
                 );
                 if (comment.body && comment.body.length > 150)
                     body += "\\.\\.\\.";
-                if (body) message += `\\n> ${body}`;
+                if (body) message += `> ${body}`;
             }
             break;
         }
@@ -942,7 +941,7 @@ function formatMessage(eventType, payload, env) {
                 );
                 if (comment.body && comment.body.length > 150)
                     body += "\\.\\.\\.";
-                if (body) message += `\\n> ${body}`;
+                if (body) message += `> ${body}`;
             }
             break;
         }
@@ -1026,32 +1025,32 @@ function formatMessage(eventType, payload, env) {
 
             switch (action) {
                 case "created":
-                    verb = `found new alert [#${alertNumber}](${alertUrl}): ${ruleDesc}`;
+                    verb = `found new alert [\\#${alertNumber}](${alertUrl}): ${ruleDesc}`;
                     break;
                 case "fixed":
-                    verb = `✅ fixed alert [#${alertNumber}](${alertUrl}): ${ruleDesc}`;
+                    verb = `✅ fixed alert [\\#${alertNumber}](${alertUrl}): ${ruleDesc}`;
                     icon = "✅";
                     break;
                 case "closed_by_user":
-                    verb = `🚫 closed alert [#${alertNumber}](${alertUrl}) as "${escapeMarkdownV2(
+                    verb = `🚫 closed alert [\\#${alertNumber}](${alertUrl}) as "${escapeMarkdownV2(
                         alert.dismissed_reason || "?"
                     )}"`;
                     icon = "🚫";
                     break; // Reason: false positive, won't fix, used in tests
                 case "reopened_by_user":
-                    verb = ` reopened alert [#${alertNumber}](${alertUrl}): ${ruleDesc}`;
+                    verb = ` reopened alert [\\#${alertNumber}](${alertUrl}): ${ruleDesc}`;
                     break;
                 case "reopened":
-                    verb = ` reopened alert [#${alertNumber}](${alertUrl}): ${ruleDesc}`;
+                    verb = ` reopened alert [\\#${alertNumber}](${alertUrl}): ${ruleDesc}`;
                     break; // Generic reopen
                 case "appeared_in_branch":
-                    verb = `alert [#${alertNumber}](${alertUrl}) appeared in branch \`${escapeMarkdownV2(
+                    verb = `alert [\\#${alertNumber}](${alertUrl}) appeared in branch \`${escapeMarkdownV2(
                         payload.ref || "?"
                     )}\``;
                     break;
                 // Add more actions if needed: closed (by system), dismissed (deprecated alias)
                 default:
-                    verb = `performed action \`${verb}\` on alert [#${alertNumber}](${alertUrl}): ${ruleDesc}`;
+                    verb = `performed action \`${verb}\` on alert [\\#${alertNumber}](${alertUrl}): ${ruleDesc}`;
             }
             message = `${
                 userLink ||
@@ -1108,7 +1107,7 @@ function formatMessage(eventType, payload, env) {
                 let actionText = `performed action \`${escapeMarkdownV2(
                     action
                 )}\` on`;
-                let subject = `release [${releaseName}](${releaseUrl || "#"})`;
+                let subject = `release [${releaseName}](${releaseUrl || "\\#"})`;
                 switch (action) {
                     case "published":
                         actionText = `📦 published`;
