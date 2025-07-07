@@ -152,6 +152,7 @@ function escapeMarkdownV2(text) {
     // Escape characters: _ * [ ] ( ) ~ ` > # + - = | { } . !
     // Need to escape backslashes first if they appear in the text
     text = text.replace(/\\/g, "\\\\");
+    
     return text.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, "\\$1");
 }
 
@@ -360,10 +361,9 @@ function formatMessage(eventType, payload, env) {
                 run?.run_started_at,
                 run?.updated_at
             ); // updated_at often marks completion time
-
-            message = `${icon} Workflow run \`${runName}\` #${escapeMarkdownV2(
-                run?.run_number || "?"
-            )} ${escapeMarkdownV2(status)} ${
+            const runNumberStr = String(run?.run_number || "?");
+            
+            message = `${icon} Workflow run \`${runName}\` #${escapeMarkdownV2(runNumberStr)} ${escapeMarkdownV2(status)} ${
                 conclusion ? `(${escapeMarkdownV2(conclusion)}) ` : ""
             }${duration} ${
                 runUrl ? `\\([View Run](${runUrl})\\) ` : ""
