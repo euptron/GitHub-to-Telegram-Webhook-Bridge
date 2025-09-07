@@ -172,7 +172,7 @@ function formatDuration(startStr, endStr) {
         if (minutes > 0) durationStr += `${minutes}m `;
         durationStr += `${seconds}s`;
 
-        return `(took ${escapeMarkdownV2(durationStr.trim())})`;
+        return `\\(took ${escapeMarkdownV2(durationStr.trim())}\\)`;
     } catch (e) {
         console.error("Error parsing duration:", e);
         return "";
@@ -188,29 +188,27 @@ function formatDuration(startStr, endStr) {
  */
 function formatMessage(eventType, payload, env) {
     const repo = payload.repository;
-    const sender = payload.sender; // User performing the action (usually)
-    const organization = payload.organization; // Org context if available
+    const sender = payload.sender;
+    const organization = payload.organization; 
 
-    // Common elements
     const senderName = escapeMarkdownV2(sender?.login || "unknown_user");
     const senderUrl = sender?.html_url;
     const userLink = senderUrl ? `[${senderName}](${senderUrl})` : senderName;
 
     const repoName = escapeMarkdownV2(repo?.full_name || "");
     const repoUrl = repo?.html_url;
-    // Repo link is constructed only if repoName is known
+    
     const repoLink = repoName
         ? repoUrl
             ? `[${repoName}](${repoUrl})`
             : repoName
         : "";
-    // Context usually includes 'in repoLink' but varies for org/repo-level events
+
     const repoContext = repoLink ? `in ${repoLink}` : "";
 
     let message = "";
-    const action = payload.action; // Common field
+    const action = payload.action;
 
-    // Helper for status icons
     const getStatusIcon = (status, conclusion) => {
         if (status === "completed") {
             switch (conclusion) {
@@ -223,34 +221,30 @@ function formatMessage(eventType, payload, env) {
                 case "skipped":
                     return "⏭️";
                 default:
-                    return "🏁"; // Neutral completion
+                    return "🏁";
             }
         }
         if (status === "queued") return "⏳";
         if (status === "waiting") return "⏳";
         if (status === "in_progress") return "⚙️";
         if (status === "requested") return "🙋";
-        return "ℹ️"; // Default info icon
+        return "ℹ️";
     };
 
     switch (eventType) {
-        // == Branch / Tag / Repo Structure ==
         case "create": {
-            // Branch or tag created
             const refType = escapeMarkdownV2(payload.ref_type || "item");
             const refName = escapeMarkdownV2(payload.ref || "unknown");
             message = `${userLink} 🌱 created ${refType} \`${refName}\` ${repoContext}`;
             break;
         }
         case "delete": {
-            // Branch or tag deleted
             const refType = escapeMarkdownV2(payload.ref_type || "item");
             const refName = escapeMarkdownV2(payload.ref || "unknown");
             message = `${userLink} 🗑️ deleted ${refType} \`${refName}\` from ${repoLink}`;
             break;
         }
         case "repository": {
-            // Repo life cycle events
             const repoNameLink = payload.repository?.html_url
                 ? `[${escapeMarkdownV2(payload.repository.full_name)}](${
                       payload.repository.html_url
@@ -267,7 +261,7 @@ function formatMessage(eventType, payload, env) {
                     verb = `🗑️ deleted repository \`${escapeMarkdownV2(
                         payload.repository.full_name
                     )}\``;
-                    break; // Link might be dead
+                    break;
                 case "archived":
                     verb = `📦 archived repository ${repoNameLink}`;
                     break;
@@ -282,7 +276,7 @@ function formatMessage(eventType, payload, env) {
                     break;
                 case "edited":
                     verb = `✏️ edited repository ${repoNameLink}`;
-                    break; // Could detail changes if needed
+                    break;
                 case "renamed":
                     verb = `✏️ renamed repository from \`${escapeMarkdownV2(
                         payload.changes?.repository?.name?.from || "?"
@@ -299,50 +293,25 @@ function formatMessage(eventType, payload, env) {
             message = `${userLink} ${verb}`;
             break;
         }
-        case "branch_protection_rule": {
-            // Branch protection rule changes
-            const rule = payload.rule;
-            const ruleName = rule
-                ? `rule for \`${escapeMarkdownV2(
-                      rule.name || rule.pattern || "?"
-                  )}\``
-                : "a branch protection rule"; // Use name or pattern if available
-            let verb = escapeMarkdownV2(action);
-            switch (action) {
-                case "created":
-                    verb = `🛡️ created ${ruleName}`;
-                    break;
-                case "edited":
-                    verb = `✏️ edited ${ruleName}`;
-                    break;
-                case "deleted":
-                    verb = `🗑️ deleted ${ruleName}`;
-                    break;
-                default:
-                    verb = `performed action \`${verb}\` on ${ruleName}`;
-            }
-            message = `${userLink} ${verb} ${repoContext}`;
-            break;
-        }
-        // Note: 'branch_protection_configurations' event doesn't seem standard. Rule event covers specifics.
-
-        // == CI/CD & Automation ==
         case "workflow_job": {
             const job = payload.workflow_job;
             const jobName = escapeMarkdownV2(job?.name || "job");
-            const status = job?.status; // queued, in_progress, completed, waiting
-            const conclusion = job?.conclusion; // success, failure, cancelled, skipped (only if status=completed)
+            const status = job?.status;
+            const conclusion = job?.conclusion;
             const icon = getStatusIcon(status, conclusion);
             const runUrl = job?.run_url;
+            
+            const runIdStr = String(job?.run_id || "?");
             const runLink = runUrl
-                ? `run [${escapeMarkdownV2(job.run_id)}](${runUrl})`
-                : `run ${escapeMarkdownV2(job?.run_id || "?")}`;
-            const duration = formatDuration(job?.started_at, job?.completed_at);
+                ? `run [${escapeMarkdownV2(runIdStr)}](${runUrl})`
+                : `run ${escapeMarkdownV2(runIdStr)}`;
 
+            const duration = formatDuration(job?.started_at, job?.completed_at);
+            
             message = `${icon} Workflow job \`${jobName}\` ${escapeMarkdownV2(
                 status
             )} ${
-                conclusion ? `(${escapeMarkdownV2(conclusion)}) ` : ""
+                conclusion ? `\\(${escapeMarkdownV2(conclusion)}\\) ` : ""
             }${duration} in ${runLink} ${repoContext}`;
             break;
         }
@@ -352,23 +321,23 @@ function formatMessage(eventType, payload, env) {
             const runName = escapeMarkdownV2(
                 run?.name || workflow?.name || "workflow"
             );
-            const status = run?.status; // requested, in_progress, completed, queued, waiting
-            const conclusion = run?.conclusion; // success, failure, cancelled, skipped, timed_out, action_required, neutral
+            const status = run?.status; 
+            const conclusion = run?.conclusion;
             const icon = getStatusIcon(status, conclusion);
             const runUrl = run?.html_url;
             const duration = formatDuration(
                 run?.run_started_at,
                 run?.updated_at
-            ); // updated_at often marks completion time
+            );
             const runNumberStr = String(run?.run_number || "?");
             
-            message = `${icon} Workflow run \`${runName}\` \\#${escapeMarkdownV2(runNumberStr)} ${escapeMarkdownV2(status)} ${
-                conclusion ? `(${escapeMarkdownV2(conclusion)}) ` : ""
+             message = `${icon} Workflow run \`${runName}\` \\#${escapeMarkdownV2(runNumberStr)} ${escapeMarkdownV2(status)} ${
+                conclusion ? `\\(${escapeMarkdownV2(conclusion)}\\) ` : ""
             }${duration} ${
                 runUrl ? `\\([View Run](${runUrl})\\) ` : ""
             }${repoContext}`;
             if (sender?.login !== run?.actor?.login) {
-                // If requester != actor
+            
                 message += ` triggered by ${escapeMarkdownV2(
                     run?.actor?.login || "?"
                 )}`;
@@ -377,13 +346,13 @@ function formatMessage(eventType, payload, env) {
         }
         case "page_build": {
             const build = payload.build;
-            const status = build?.status; // building, built, errored
+            const status = build?.status;
             const pageUrl = repoUrl
                 ? `${repoUrl.replace(
                       "github.com",
                       escapeMarkdownV2(repo.owner.login) + ".github.io"
                   )}/${escapeMarkdownV2(repo.name)}`
-                : ""; // Best guess for Pages URL
+                : "";
             let icon = "📄";
             let messageText = "";
             if (status === "built") {
@@ -413,25 +382,24 @@ function formatMessage(eventType, payload, env) {
         case "check_suite": {
             const suite = payload.check_suite;
             const appName = escapeMarkdownV2(suite?.app?.name || "Check Suite");
-            const status = suite?.status; // requested, in_progress, completed, queued
-            const conclusion = suite?.conclusion; // success, failure, neutral, cancelled, timed_out, action_required, stale, skipped
+            const status = suite?.status;
+            const conclusion = suite?.conclusion;
             const icon = getStatusIcon(status, conclusion);
             const branch = escapeMarkdownV2(suite?.head_branch || "?");
 
-            message = `${icon} ${appName} status \`${escapeMarkdownV2(
+              message = `${icon} ${appName} status \`${escapeMarkdownV2(
                 status
             )}\` ${
-                conclusion ? `(${escapeMarkdownV2(conclusion)}) ` : ""
+                conclusion ? `\\(${escapeMarkdownV2(conclusion)}\\) ` : ""
             }on branch \`${branch}\` ${repoContext}`;
-            // Could add link to suite/PR if available in payload
             break;
         }
         case "check_run": {
             const run = payload.check_run;
             const appName = escapeMarkdownV2(run?.app?.name || "Check Run");
             const runName = escapeMarkdownV2(run?.name || "check");
-            const status = run?.status; // queued, in_progress, completed, requested, waiting, pending
-            const conclusion = run?.conclusion; // success, failure, neutral, cancelled, timed_out, action_required, stale, skipped
+            const status = run?.status;
+            const conclusion = run?.conclusion;
             const icon = getStatusIcon(status, conclusion);
             const runUrl = run?.html_url;
             const duration = formatDuration(run?.started_at, run?.completed_at);
@@ -446,7 +414,6 @@ function formatMessage(eventType, payload, env) {
             break;
         }
         case "status": {
-            // Commit status API update
             const commitSha = escapeMarkdownV2(
                 payload.sha?.substring(0, 7) || "commit"
             );
@@ -465,10 +432,7 @@ function formatMessage(eventType, payload, env) {
             if (targetUrl) message += ` \\([Details](${targetUrl})\\)`;
             break;
         }
-
-        // == Issues / PRs / Discussions ==
         case "issues": {
-            // Existing logic covers most actions, added 'typed'/'untyped'
             const issue = payload.issue;
             const action = payload.action;
             const issueNumber = issue?.number;
@@ -488,7 +452,7 @@ function formatMessage(eventType, payload, env) {
 
             let actionText = `performed action \`${escapeMarkdownV2(
                 action
-            )}\` on`; // Fallback
+            )}\` on`;
             let subject = `issue [\\#${issueNumber} ${issueTitle}](${
                 issueUrl || "\\#"
             })`;
@@ -535,9 +499,10 @@ function formatMessage(eventType, payload, env) {
                 case "locked":
                     actionText = `locked conversation on`;
                     details = payload.issue?.active_lock_reason
-                        ? `(reason: _${escapeMarkdownV2(
+                    details = payload.issue?.active_lock_reason
+                        ? `\\(reason: _${escapeMarkdownV2(
                               payload.issue.active_lock_reason
-                          )}_)`
+                          )}_\\)`
                         : "";
                     break;
                 case "unlocked":
@@ -589,7 +554,6 @@ function formatMessage(eventType, payload, env) {
             break;
         }
         case "pull_request": {
-            // Existing logic covers most, added 'enqueued', 'dequeued'
             const pr = payload.pull_request;
             const action = payload.action;
             const prNumber = pr?.number;
@@ -687,9 +651,9 @@ function formatMessage(eventType, payload, env) {
                 case "locked":
                     actionText = `locked conversation on`;
                     details = payload.pull_request?.active_lock_reason
-                        ? `(reason: _${escapeMarkdownV2(
+                        ? `\\(reason: _${escapeMarkdownV2(
                               payload.pull_request.active_lock_reason
-                          )}_)`
+                          )}_\\)`
                         : "";
                     break;
                 case "unlocked":
@@ -763,7 +727,6 @@ function formatMessage(eventType, payload, env) {
             message = `${userLink} ${icon} ${stateText} on pull request [\\#${prNumber}](${prUrl}) ${
                 reviewUrl ? `\\([View Review](${reviewUrl})\\) ` : ""
             }${repoContext}`;
-            // Add review body preview if it exists and state is 'commented' or has a body
             if (review?.body) {
                 let body = escapeMarkdownV2(review.body.substring(0, 150));
                 if (review.body.length > 150) body += "\\.\\.\\.";
@@ -782,7 +745,7 @@ function formatMessage(eventType, payload, env) {
                 return "";
             }
 
-            // Get URL of the first comment in the thread as context
+    
             const threadUrl = thread.comments[0].html_url;
             let verb = escapeMarkdownV2(action);
             if (action === "resolved") verb = "✅ resolved a review thread";
@@ -795,7 +758,6 @@ function formatMessage(eventType, payload, env) {
         }
         case "issue_comment":
         case "pull_request_review_comment": {
-            // Handles comments on PR diffs
             const comment = payload.comment;
             const action = payload.action;
             const issue = payload.issue; // Issue context (for issue comments)
@@ -803,7 +765,6 @@ function formatMessage(eventType, payload, env) {
             const commentUrl = comment?.html_url;
             let targetLink = "an item"; // Fallback
 
-            // Determine target based on available context
             if (pr?.number) {
                 targetLink = `pull request [\\#${pr.number} ${escapeMarkdownV2(
                     pr.title || ""
@@ -832,7 +793,6 @@ function formatMessage(eventType, payload, env) {
             break;
         }
         case "commit_comment": {
-            // Comment on a specific commit (not part of a PR review)
             const comment = payload.comment;
             const action = payload.action;
             const commitShaShort = escapeMarkdownV2(
@@ -946,7 +906,6 @@ function formatMessage(eventType, payload, env) {
             break;
         }
         case "label": {
-            // Label definition created/edited/deleted
             const labelName = escapeMarkdownV2(payload.label?.name || "label");
             let verb = escapeMarkdownV2(action);
             switch (action) {
@@ -969,7 +928,7 @@ function formatMessage(eventType, payload, env) {
         // == Security & Dependencies ==
         case "dependabot_alert": {
             const alert = payload.alert;
-            const state = alert?.state; // open, fixed, dismissed, auto_dismissed, auto_reopened
+            const state = alert?.state; 
             const severity = escapeMarkdownV2(
                 alert?.security_advisory?.severity || "?"
             ); // low, medium, high, critical
@@ -982,7 +941,7 @@ function formatMessage(eventType, payload, env) {
 
             switch (action) {
                 case "created":
-                    verb = `created Dependabot alert (\`${severity}\`) for \`${packageName}\``;
+                   verb = `created Dependabot alert \\(\`${severity}\`\\) for \`${packageName}\``;
                     break;
                 case "fixed":
                     verb = `✅ fixed Dependabot alert for \`${packageName}\``;
@@ -1036,19 +995,18 @@ function formatMessage(eventType, payload, env) {
                         alert.dismissed_reason || "?"
                     )}"`;
                     icon = "🚫";
-                    break; // Reason: false positive, won't fix, used in tests
+                    break;
                 case "reopened_by_user":
                     verb = ` reopened alert [\\#${alertNumber}](${alertUrl}): ${ruleDesc}`;
                     break;
                 case "reopened":
                     verb = ` reopened alert [\\#${alertNumber}](${alertUrl}): ${ruleDesc}`;
-                    break; // Generic reopen
+                    break;
                 case "appeared_in_branch":
                     verb = `alert [\\#${alertNumber}](${alertUrl}) appeared in branch \`${escapeMarkdownV2(
                         payload.ref || "?"
                     )}\``;
                     break;
-                // Add more actions if needed: closed (by system), dismissed (deprecated alias)
                 default:
                     verb = `performed action \`${verb}\` on alert [\\#${alertNumber}](${alertUrl}): ${ruleDesc}`;
             }
@@ -1061,9 +1019,7 @@ function formatMessage(eventType, payload, env) {
             break;
         }
 
-        // == Misc / Meta ==
         case "fork": {
-            // Repo forked
             const forkeeName = escapeMarkdownV2(
                 payload.forkee?.full_name || "unknown"
             );
@@ -1075,7 +1031,6 @@ function formatMessage(eventType, payload, env) {
             break;
         }
         case "star": {
-            // Repo starred/unstarred
             if (action === "created")
                 message = `${userLink} 🌟 starred ${repoLink}`;
             else if (action === "deleted")
@@ -1084,14 +1039,12 @@ function formatMessage(eventType, payload, env) {
             break;
         }
         case "watch": {
-            // User starts watching (legacy - star is preferred)
             if (action === "started")
                 message = `${userLink} 👀 started watching ${repoLink}`;
             else message = "";
             break;
         }
         case "release": {
-            // Release published, edited, etc.
             const release = payload.release;
             const tagName = escapeMarkdownV2(release?.tag_name || "tag?");
             const releaseName = escapeMarkdownV2(
@@ -1153,7 +1106,6 @@ function formatMessage(eventType, payload, env) {
             break;
         }
         case "package": {
-            // GitHub Package published/updated
             const pkg = payload.package;
             const pkgVersion = escapeMarkdownV2(
                 pkg?.package_version?.version || "?"
@@ -1173,7 +1125,6 @@ function formatMessage(eventType, payload, env) {
             break;
         }
         case "gollum": {
-            // Wiki page updated
             const pages = payload.pages || [];
             const pageCount = pages.length;
             if (pageCount > 0) {
@@ -1181,7 +1132,7 @@ function formatMessage(eventType, payload, env) {
                 const pageName = escapeMarkdownV2(firstPage.page_name || "?");
                 const pageAction = escapeMarkdownV2(
                     firstPage.action || "updated"
-                ); // created, edited
+                );
                 const pageUrl = firstPage.html_url;
                 message = `${userLink} wiki page \`${pageName}\` ${pageAction} ${
                     pageUrl ? `\\([View Page](${pageUrl})\\) ` : ""
@@ -1196,36 +1147,32 @@ function formatMessage(eventType, payload, env) {
             break;
         }
         case "team": {
-            // Team edited (permissions change) or repo added/removed from team
             const teamName = escapeMarkdownV2(payload.team?.name || "team");
             const teamUrl = payload.team?.html_url;
             const teamLink = teamUrl
                 ? `[${teamName}](${teamUrl})`
                 : `\`${teamName}\``;
             let verb = escapeMarkdownV2(action);
-            // Note: 'added_to_repository' / 'removed_from_repository' actions are on the REPOSITORY payload, not team event usually.
-            // This event focuses on team definition changes or adding repo TO a team.
             switch (action) {
                 case "created":
                     verb = `created team ${teamLink}`;
-                    break; // Org level usually
+                    break;
                 case "deleted":
                     verb = `deleted team \`${teamName}\``;
-                    break; // Org level usually
+                    break;
                 case "edited":
                     verb = `✏️ edited team ${teamLink}`;
                     break;
                 case "added_to_repository":
                     verb = `added ${repoLink} to team ${teamLink}`;
-                    break; // This is less common event trigger
+                    break;
                 case "removed_from_repository":
                     verb = `removed ${repoLink} from team ${teamLink}`;
-                    break; // Less common
+                    break;
                 default:
                     verb = `performed action \`${verb}\` regarding team ${teamLink}`;
             }
-            // Sender might be less relevant if it's an org admin action
-            message = `Team action: ${verb}`; // Simpler message for team events
+            message = `Team action: ${verb}`;
             break;
         }
 
@@ -1233,11 +1180,11 @@ function formatMessage(eventType, payload, env) {
             console.log(
                 `-> Unsupported GitHub event type received: ${eventType}`
             );
-            message = ""; // No message for unsupported events by default
+            message = "";
             break;
     }
 
-    return message.trim(); // Return final message or empty string
+    return message.trim();
 }
 
 async function sendTelegramMessage(text, env) {
